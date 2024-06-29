@@ -762,9 +762,9 @@ def ezville_loop(config):
                     
                     # 일괄 차단기는 state를 변경하여 제공해서 월패드에서 조작하도록 해야함
                     # 월패드의 ACK는 무시
-                    sendcmd = checksum('F7' + RS485_DEVICE[device]['state']['id'] + '0' + str(idx) + RS485_DEVICE[device]['state']['cmd'] + '0300' + CMD + '000000')
-                    recvcmd = 'NULL'
-                    statcmd = [key, 'NULL']
+                   sendcmd = checksum('F7' + RS485_DEVICE[device]['state']['id'] + '0' + str(idx) + RS485_DEVICE[device]['state']['cmd'] + '0300' + CMD + '000000')
+                   recvcmd = 'NULL'
+                   statcmd = [key, 'NULL']
                     
                     await CMD_QUEUE.put({'sendcmd': sendcmd, 'recvcmd': recvcmd, 'statcmd': statcmd})
                     
