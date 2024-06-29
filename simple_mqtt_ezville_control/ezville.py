@@ -35,8 +35,8 @@ RS485_DEVICE = {
         'power':    { 'id': '12', 'cmd': '41', 'ack': 'C1' } # 잠그기만 가능
     },
     'batch': {
+        'query':    { 'id': '33', 'cmd': '01' },
         'state':    { 'id': '33', 'cmd': '81' },
-
         'press':    { 'id': '33', 'cmd': '41', 'ack': 'C1' }
     }
 }
@@ -119,10 +119,11 @@ DISCOVERY_PAYLOAD = {
         'icon': 'mdi:elevator-down'
     },
     {
-        '_intg': 'binary_sensor',
+        '_intg': 'light',
         '~': 'ezville/batch_{:0>2d}_{:0>2d}',
         'name': 'ezville_batch-groupcontrol_{:0>2d}_{:0>2d}',
         'stat_t': '~/group/state',
+        'cmd_t': '~/power/command',
         'icon': 'mdi:lightbulb-group'
     },
     {
