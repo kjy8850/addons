@@ -1,9 +1,9 @@
 {
-  "name": "MQTT 기반 Simple EzVille Wallpad Control",
+  "name": "MQTT 기반 Simple EzVille Wallpad Control(1st)",
   "version": "0.0.1",
-  "slug": "simple_mqtt_ezville_control",
+  "slug": "simple_mqtt_ezville_control1",
   "url": "https://github.com/ktdo79/addons",
-  "description": "MQTT 통신을 활용한 간단화된 EzVille 월패드 컨트롤러",
+  "description": "MQTT 통신을 활용한 간단화된 EzVille 월패드 컨트롤러1",
   "arch": ["armhf", "armv7", "aarch64", "amd64", "i386"],
   "map": [
     "share:rw"
