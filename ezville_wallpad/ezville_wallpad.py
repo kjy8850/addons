@@ -58,7 +58,8 @@ RS485_DEVICE = {
         "state": {"id": 0x12, "cmd": 0x81},
         "power": {"id": 0x12, "cmd": 0x41, "ack": 0xC1},  # 잠그기만 가능
     },
-    "batch": {  # 안보임
+    "batch": {
+        "query": {"id": 0x33, "cmd": 0x01},
         "state": {"id": 0x33, "cmd": 0x81},
         "press": {"id": 0x33, "cmd": 0x41, "ack": 0xC1},
     },
@@ -75,7 +76,7 @@ DISCOVERY_DEVICE = {
     "name": "ezville_wallpad",
     "mf": "EzVille",
     "mdl": "EzVille Wallpad",
-    "sw": "dongs0104/ha_addons/ezville_wallpad",
+    "sw": "kjy8850/addons/ezville_wallpad",
 }
 
 DISCOVERY_PAYLOAD = {
@@ -173,6 +174,16 @@ DISCOVERY_PAYLOAD = {
             "stat_t": "~/current/state",
             "unit_of_meas": "_",
             "val_tpl": "_",
+        }
+    ],
+    "batch": [
+        {
+            "_intg": "light",
+            "~": "{prefix}/batch/{id}",
+            "name": "{prefix}_batch_{id}",
+            "opt": True,
+            "stat_t": "~/power/state",
+            "cmd_t": "~/power/command",
         }
     ],
 }
@@ -519,6 +530,20 @@ def mqtt_device(topics, payload):
             packet[4] = 0x01
             packet[5] = int(float(payload))
             packet[6], packet[7] = serial_generate_checksum(packet)
+    elif device == "batch":
+        if payload == "ON":
+            payload = 0x01
+        elif payload == "OFF":
+            payload = 0x00
+        length = 8
+        packet = bytearray(length)
+        packet[0] = 0xF7
+        packet[1] = cmd["id"]
+        packet[2] = int(idn.split("_")[0]) << 4 | int(idn.split("_")[1])
+        packet[3] = cmd["cmd"]
+        packet[4] = 0x01
+        packet[5] = payload
+        packet[6], packet[7] = serial_generate_checksum(packet)
     if packet:
         packet = bytes(packet)
         serial_queue[packet] = time.time()
