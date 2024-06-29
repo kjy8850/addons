@@ -4,7 +4,7 @@ import time
 import asyncio
 import telnetlib
 import socket
-import randomf
+import random
 
 from queue import Queue
 
