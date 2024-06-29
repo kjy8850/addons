@@ -123,7 +123,7 @@ DISCOVERY_PAYLOAD = {
         '~': 'ezville/batch_{:0>2d}_{:0>2d}',
         'name': 'ezville_batch-groupcontrol_{:0>2d}_{:0>2d}',
         'stat_t': '~/group/state',
-        'cmd_t': '~/power/command',
+        'cmd_t': '~/group/command',
         'icon': 'mdi:lightbulb-group'
     },
     {
@@ -751,10 +751,10 @@ def ezville_loop(config):
                     if topics[2] == 'elevator-up':
                         elup_state = '1'
                     elif topics[2] == 'elevator-down':
-                        eldown_state = '1'
-# 그룹 조명과 외출 모드 설정은 테스트 후에 추가 구현                                                
-#                    elif topics[2] == 'group':
-#                        group_state = '1'
+                        eldown_state = '1'                                            
+                    elif topics[2] == 'group':
+                        group_state = '1'
+# 외출 모드 설정은 테스트 후에 추가 구현    
 #                    elif topics[2] == 'outing':
 #                        out_state = '1'
                             
