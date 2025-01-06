@@ -40,8 +40,8 @@ DISCOVERY_DEVICE = {
         "ezville_wallpad2",
     ],
     "name": "ezville_wallpad2",
-    "mf": "EzVille2",
-    "mdl": "EzVille Wallpad2",
+    "mf": "EzVille",
+    "mdl": "EzVille Wallpad",
     "sw": "kjy8850/addons/ezville_wallpad2",
 }
 
