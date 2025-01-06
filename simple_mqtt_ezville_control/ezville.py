@@ -37,12 +37,12 @@ RS485_DEVICE = {
 # MQTT Discovery를 위한 Preset 정보
 DISCOVERY_DEVICE = {
     "ids": [
-        "ezville_wallpad",
+        "ezville_wallpad2",
     ],
-    "name": "ezville_wallpad",
-    "mf": "EzVille",
-    "mdl": "EzVille Wallpad",
-    "sw": "kjy8850/addons2/ezville_wallpad",
+    "name": "ezville_wallpad2",
+    "mf": "EzVille2",
+    "mdl": "EzVille Wallpad2",
+    "sw": "kjy8850/addons/ezville_wallpad2",
 }
 
 # MQTT Discovery를 위한 Payload 정보
