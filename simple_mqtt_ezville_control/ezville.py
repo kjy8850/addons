@@ -189,8 +189,8 @@ config_dir = "/data"
 
 HA_TOPIC = "ezville"
 STATE_TOPIC = HA_TOPIC + "/{}/{}/state"
-EW11_TOPIC = "ew11"
-EW11_SEND_TOPIC = EW11_TOPIC + "/send"
+EW12_TOPIC = "EW12"
+EW12_SEND_TOPIC = EW12_TOPIC + "/send"
 
 
 # Main Function
@@ -198,19 +198,19 @@ def ezville_loop(config):
     # Log 생성 Flag
     debug = config["DEBUG_LOG"]
     mqtt_log = config["MQTT_LOG"]
-    ew11_log = config["EW11_LOG"]
+    EW12_log = config["EW12_LOG"]
 
     # 통신 모드 설정: mixed, socket, mqtt
     comm_mode = config["mode"]
 
     # Socket 정보
-    SOC_ADDRESS = config["ew11_server"]
-    SOC_PORT = config["ew11_port"]
+    SOC_ADDRESS = config["EW12_server"]
+    SOC_PORT = config["EW12_port"]
 
-    # EW11 혹은 HA 전달 메시지 저장소
+    # EW12 혹은 HA 전달 메시지 저장소
     MSG_QUEUE = Queue()
 
-    # EW11에 보낼 Command 및 예상 Acknowledge 패킷
+    # EW12에 보낼 Command 및 예상 Acknowledge 패킷
     CMD_QUEUE = asyncio.Queue()
 
     # State 저장용 공간
@@ -223,7 +223,7 @@ def ezville_loop(config):
     DISCOVERY_DELAY = config["discovery_delay"]
     DISCOVERY_LIST = []
 
-    # EW11 전달 패킷 중 처리 후 남은 짜투리 패킷 저장
+    # EW12 전달 패킷 중 처리 후 남은 짜투리 패킷 저장
     RESIDUE = ""
 
     # 강제 주기적 업데이트 설정 - 매 force_update_period 마다 force_update_duration초간 HA 업데이트 실시
@@ -232,7 +232,7 @@ def ezville_loop(config):
     FORCE_PERIOD = config["force_update_period"]
     FORCE_DURATION = config["force_update_duration"]
 
-    # Command를 EW11로 보내는 방식 설정 (동시 명령 횟수, 명령 간격 및 재시도 횟수)
+    # Command를 EW12로 보내는 방식 설정 (동시 명령 횟수, 명령 간격 및 재시도 횟수)
     CMD_INTERVAL = config["command_interval"]
     CMD_RETRY_COUNT = config["command_retry_count"]
     FIRST_WAITTIME = config["first_waittime"]
@@ -244,14 +244,14 @@ def ezville_loop(config):
     SERIAL_RECV_DELAY = config["serial_recv_delay"]
     RESTART_CHECK_DELAY = config["restart_check_delay"]
 
-    # EW11에 설정된 BUFFER SIZE
-    EW11_BUFFER_SIZE = config["ew11_buffer_size"]
+    # EW12에 설정된 BUFFER SIZE
+    EW12_BUFFER_SIZE = config["EW12_buffer_size"]
 
-    # EW11 동작상태 확인용 메시지 수신 시간 체크 주기 및 체크용 시간 변수
-    EW11_TIMEOUT = config["ew11_timeout"]
+    # EW12 동작상태 확인용 메시지 수신 시간 체크 주기 및 체크용 시간 변수
+    EW12_TIMEOUT = config["EW12_timeout"]
     last_received_time = time.time()
 
-    # EW11 재시작 확인용 Flag
+    # EW12 재시작 확인용 Flag
     restart_flag = False
 
     # MQTT Integration 활성화 확인 Flag - 단, 사용을 위해서는 MQTT Integration에서 Birth/Last Will Testament 설정 및 Retain 설정 필요
@@ -275,9 +275,9 @@ def ezville_loop(config):
         if comm_mode == 'socket':
           client.subscribe([(HA_TOPIC + '/#', 0), ('homeassistant/status', 0)])
         elif comm_mode == 'mixed':
-          client.subscribe([(HA_TOPIC + '/#', 0), (EW11_TOPIC + '/recv', 0), ('homeassistant/status', 0)])
+          client.subscribe([(HA_TOPIC + '/#', 0), (EW12_TOPIC + '/recv', 0), ('homeassistant/status', 0)])
         else:
-          client.subscribe([(HA_TOPIC + '/#', 0), (EW11_TOPIC + '/recv', 0), (EW11_TOPIC + '/send', 1), ('homeassistant/status', 0)])
+          client.subscribe([(HA_TOPIC + '/#', 0), (EW12_TOPIC + '/recv', 0), (EW12_TOPIC + '/send', 1), ('homeassistant/status', 0)])
       else:
         reason_codes = {
           mqtt.ReasonCodes(1): 'Connection refused - incorrect protocol version',
@@ -334,14 +334,14 @@ def ezville_loop(config):
 
                 if topics[0] == HA_TOPIC and topics[-1] == "command":
                     await HA_process(topics, msg.payload.decode("utf-8"))
-                elif topics[0] == EW11_TOPIC and topics[-1] == "recv":
-                    # Que에서 확인된 시간 기준으로 EW11 Health Check함.
+                elif topics[0] == EW12_TOPIC and topics[-1] == "recv":
+                    # Que에서 확인된 시간 기준으로 EW12 Health Check함.
                     last_received_time = time.time()
 
-                    await EW11_process(msg.payload.hex().upper())
+                    await EW12_process(msg.payload.hex().upper())
 
-    # EW11 전달된 메시지 처리
-    async def EW11_process(raw_data):
+    # EW12 전달된 메시지 처리
+    async def EW12_process(raw_data):
         nonlocal DISCOVERY_LIST
         nonlocal RESIDUE
         nonlocal MSG_CACHE
@@ -349,7 +349,7 @@ def ezville_loop(config):
 
         raw_data = RESIDUE + raw_data
 
-        if ew11_log:
+        if EW12_log:
             log("[SIGNAL] receved: {}".format(raw_data))
 
         k = 0
@@ -976,15 +976,15 @@ def ezville_loop(config):
                             )
                         )
 
-    # HA에서 전달된 명령을 EW11 패킷으로 전송
-    async def send_to_ew11(send_data):
+    # HA에서 전달된 명령을 EW12 패킷으로 전송
+    async def send_to_EW12(send_data):
         for i in range(CMD_RETRY_COUNT):
-            if ew11_log:
+            if EW12_log:
                 log("[SIGNAL] 신호 전송: {}".format(send_data))
 
             if comm_mode == "mqtt":
                 mqtt_client.publish(
-                    EW11_SEND_TOPIC, bytes.fromhex(send_data["sendcmd"])
+                    EW12_SEND_TOPIC, bytes.fromhex(send_data["sendcmd"])
                 )
             else:
                 nonlocal soc
@@ -1023,7 +1023,7 @@ def ezville_loop(config):
             if send_data["statcmd"][1] == DEVICE_STATE.get(send_data["statcmd"][0]):
                 return
 
-        if ew11_log:
+        if EW12_log:
             log(
                 "[SIGNAL] {}회 명령을 재전송하였으나 수행에 실패했습니다.. 다음의 Queue 삭제: {}".format(
                     str(CMD_RETRY_COUNT), send_data
@@ -1031,45 +1031,45 @@ def ezville_loop(config):
             )
             return
 
-    # EW11 동작 상태를 체크해서 필요시 리셋 실시
-    async def ew11_health_loop():
+    # EW12 동작 상태를 체크해서 필요시 리셋 실시
+    async def EW12_health_loop():
         while True:
             timestamp = time.time()
 
-            # TIMEOUT 시간 동안 새로 받은 EW11 패킷이 없으면 재시작
-            if timestamp - last_received_time > EW11_TIMEOUT:
+            # TIMEOUT 시간 동안 새로 받은 EW12 패킷이 없으면 재시작
+            if timestamp - last_received_time > EW12_TIMEOUT:
                 log(
-                    "[WARNING] {} {} {}초간 신호를 받지 못했습니다. ew11 기기를 재시작합니다.".format(
-                        timestamp, last_received_time, EW11_TIMEOUT
+                    "[WARNING] {} {} {}초간 신호를 받지 못했습니다. EW12 기기를 재시작합니다.".format(
+                        timestamp, last_received_time, EW12_TIMEOUT
                     )
                 )
                 try:
-                    await reset_EW11()
+                    await reset_EW12()
 
                     restart_flag = True
 
                 except:
                     log("[ERROR] 기기 재시작 오류! 기기 상태를 확인하세요.")
             else:
-                log("[INFO] EW11 연결 상태 문제 없음")
-            await asyncio.sleep(EW11_TIMEOUT)
+                log("[INFO] EW12 연결 상태 문제 없음")
+            await asyncio.sleep(EW12_TIMEOUT)
 
-    # Telnet 접속하여 EW11 리셋
-    async def reset_EW11():
-        ew11_id = config["ew11_id"]
-        ew11_password = config["ew11_password"]
-        ew11_server = config["ew11_server"]
+    # Telnet 접속하여 EW12 리셋
+    async def reset_EW12():
+        EW12_id = config["EW12_id"]
+        EW12_password = config["EW12_password"]
+        EW12_server = config["EW12_server"]
 
-        ew11 = telnetlib.Telnet(ew11_server)
+        EW12 = telnetlib.Telnet(EW12_server)
 
-        ew11.read_until(b"login:")
-        ew11.write(ew11_id.encode("utf-8") + b"\n")
-        ew11.read_until(b"password:")
-        ew11.write(ew11_password.encode("utf-8") + b"\n")
-        ew11.write("Restart".encode("utf-8") + b"\n")
-        ew11.read_until(b"Restart..")
+        EW12.read_until(b"login:")
+        EW12.write(EW12_id.encode("utf-8") + b"\n")
+        EW12.read_until(b"password:")
+        EW12.write(EW12_password.encode("utf-8") + b"\n")
+        EW12.write("Restart".encode("utf-8") + b"\n")
+        EW12.read_until(b"Restart..")
 
-        log("[INFO] EW11 리셋 완료")
+        log("[INFO] EW12 리셋 완료")
 
         # 리셋 후 60초간 Delay
         await asyncio.sleep(60)
@@ -1108,9 +1108,9 @@ def ezville_loop(config):
 
         while True:
             try:
-                # EW11 버퍼 크기만큼 데이터 받기
-                DATA = soc.recv(EW11_BUFFER_SIZE)
-                msg.topic = EW11_TOPIC + "/recv"
+                # EW12 버퍼 크기만큼 데이터 받기
+                DATA = soc.recv(EW12_BUFFER_SIZE)
+                msg.topic = EW12_TOPIC + "/recv"
                 msg.payload = DATA
 
                 MSG_QUEUE.put(msg)
@@ -1152,12 +1152,12 @@ def ezville_loop(config):
         while True:
             if not CMD_QUEUE.empty():
                 send_data = await CMD_QUEUE.get()
-                await send_to_ew11(send_data)
+                await send_to_EW12(send_data)
 
             # COMMAND_LOOP_DELAY 초 대기 후 루프 진행
             await asyncio.sleep(COMMAND_LOOP_DELAY)
 
-    # EW11 재실행 시 리스타트 실시
+    # EW12 재실행 시 리스타트 실시
     async def restart_control():
         nonlocal mqtt_client
         nonlocal restart_flag
@@ -1166,7 +1166,7 @@ def ezville_loop(config):
         while True:
             if restart_flag or (not MQTT_ONLINE and ADDON_STARTED and REBOOT_CONTROL):
                 if restart_flag:
-                    log("[WARNING] EW11 재시작 확인")
+                    log("[WARNING] EW12 재시작 확인")
                 elif not MQTT_ONLINE and ADDON_STARTED and REBOOT_CONTROL:
                     log("[WARNING] 동작 중 MQTT Integration Offline 변경")
 
@@ -1199,7 +1199,7 @@ def ezville_loop(config):
     mqtt_client.on_message = on_message
     mqtt_client.connect_async(config["mqtt_server"])
 
-    # asyncio loop 획득 및 EW11 오류시 재시작 task 등록
+    # asyncio loop 획득 및 EW12 오류시 재시작 task 등록
     loop = asyncio.get_event_loop()
     loop.create_task(restart_control())
 
@@ -1229,12 +1229,12 @@ def ezville_loop(config):
         # socket 데이터 수신 loop 실행
         if comm_mode == "socket":
             tasklist.append(loop.create_task(serial_recv_loop()))
-        # EW11 패킷 기반 state 업데이트 loop 실행
+        # EW12 패킷 기반 state 업데이트 loop 실행
         tasklist.append(loop.create_task(state_update_loop()))
         # Home Assistant 명령 실행 loop 실행
         tasklist.append(loop.create_task(command_loop()))
-        # EW11 상태 체크 loop 실행
-        tasklist.append(loop.create_task(ew11_health_loop()))
+        # EW12 상태 체크 loop 실행
+        tasklist.append(loop.create_task(EW12_health_loop()))
 
         # ADDON 정상 시작 Flag 설정
         ADDON_STARTED = True
