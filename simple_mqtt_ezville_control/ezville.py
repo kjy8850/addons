@@ -814,8 +814,6 @@ def ezville_loop(config):
 
                 elif device == "light":
                     pwr = "01" if value == "ON" else "00"
-                    if idx == 1 and sid in [1, 2] and pwr == "01":
-                        pwr = "F1"
                     sendcmd = checksum(
                         "F7"
                         + RS485_DEVICE[device]["power"]["id"]
