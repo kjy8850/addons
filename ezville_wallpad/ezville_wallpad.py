@@ -388,7 +388,7 @@ def mqtt_discovery(payload):
     # discovery에 등록
     topic = f"homeassistant/{intg}/ezville_wallpad/{payload['name']}/config"
     logger.info("Add new device: %s", topic)
-    mqtt.publish(topic, json.dumps(payload), retain=True)
+    mqtt.publish(topic, json.dumps(payload))
 
 
 # KTDO: 수정 완료
