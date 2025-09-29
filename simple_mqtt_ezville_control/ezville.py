@@ -992,7 +992,7 @@ def ezville_loop(config):
                     soc.sendall(bytes.fromhex(send_data["sendcmd"]))
                 except OSError:
                     soc.close()
-                    soc = initiate_socket(soc)
+                    soc = initiate_socket()
                     soc.sendall(bytes.fromhex(send_data["sendcmd"]))
             if debug:
                 log(
