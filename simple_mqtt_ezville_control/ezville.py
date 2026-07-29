@@ -175,14 +175,6 @@ DISCOVERY_PAYLOAD = {
             "unit_of_meas": "µg/m³",
             "device_class": "pm10",
         },
-        {
-            "_intg": "sensor",
-            "~": "ezville/purifier_{:0>2d}_{:0>2d}",
-            "name": "ezville_purifier_{:0>2d}_{:0>2d}_pm25",
-            "stat_t": "~/pm25/state",
-            "unit_of_meas": "µg/m³",
-            "device_class": "pm25",
-        },
     ],
     "ventilator": [
         {
@@ -682,13 +674,13 @@ def ezville_loop(config):
                                 co2_high = int(packet[24:26], 16)
                                 co2_low = int(packet[26:28], 16)
                                 co2_val = (co2_high << 8) | co2_low
-                                pm25_val = int(packet[28:30], 16)
+                                # pm25_val = int(packet[28:30], 16)
 
                                 await update_state(name, "power", rid, id, pwr_state)
                                 await update_state(name, "mode", rid, id, mode_state)
                                 await update_state(name, "co2", rid, id, str(co2_val))
                                 await update_state(name, "pm10", rid, id, str(pm10_val))
-                                await update_state(name, "pm25", rid, id, str(pm25_val))
+                                # await update_state(name, "pm25", rid, id, str(pm25_val))
 
                                 if STATE_PACKET:
                                     MSG_CACHE[packet[0:10]] = packet[10:]
