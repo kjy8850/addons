@@ -167,6 +167,22 @@ DISCOVERY_PAYLOAD = {
             "unit_of_meas": "ppm",
             "device_class": "carbon_dioxide",
         },
+        {
+            "_intg": "sensor",
+            "~": "ezville/purifier_{:0>2d}_{:0>2d}",
+            "name": "ezville_purifier_{:0>2d}_{:0>2d}_pm10",
+            "stat_t": "~/pm10/state",
+            "unit_of_meas": "µg/m³",
+            "device_class": "pm10",
+        },
+        {
+            "_intg": "sensor",
+            "~": "ezville/purifier_{:0>2d}_{:0>2d}",
+            "name": "ezville_purifier_{:0>2d}_{:0>2d}_pm25",
+            "stat_t": "~/pm25/state",
+            "unit_of_meas": "µg/m³",
+            "device_class": "pm25",
+        },
     ],
     "ventilator": [
         {
@@ -178,14 +194,6 @@ DISCOVERY_PAYLOAD = {
             "preset_mode_state_topic": "~/mode/state",
             "preset_mode_command_topic": "~/mode/command",
             "preset_modes": ["low", "medium", "high", "auto", "sleep"],
-        },
-        {
-            "_intg": "sensor",
-            "~": "ezville/ventilator_{:0>2d}_{:0>2d}",
-            "name": "ezville_ventilator_{:0>2d}_{:0>2d}_co2",
-            "stat_t": "~/co2/state",
-            "unit_of_meas": "ppm",
-            "device_class": "carbon_dioxide",
         },
     ],
 }
@@ -658,9 +666,9 @@ def ezville_loop(config):
                                         await mqtt_discovery(payload)
                                         await asyncio.sleep(DISCOVERY_DELAY)
 
-                                pwr_state = "ON" if packet[10:12] == "01" else "OFF"
+                                pwr_state = "ON" if packet[12:14] == "01" else "OFF"
 
-                                mode_val = packet[12:14]
+                                mode_val = packet[14:16]
                                 mode_map = {
                                     "01": "auto",
                                     "02": "low",
@@ -670,13 +678,17 @@ def ezville_loop(config):
                                 }
                                 mode_state = mode_map.get(mode_val, "auto")
 
-                                co2_high = int(packet[20:22], 16)
-                                co2_low = int(packet[24:26], 16)
+                                pm10_val = int(packet[22:24], 16)
+                                co2_high = int(packet[24:26], 16)
+                                co2_low = int(packet[26:28], 16)
                                 co2_val = (co2_high << 8) | co2_low
+                                pm25_val = int(packet[28:30], 16)
 
                                 await update_state(name, "power", rid, id, pwr_state)
                                 await update_state(name, "mode", rid, id, mode_state)
                                 await update_state(name, "co2", rid, id, str(co2_val))
+                                await update_state(name, "pm10", rid, id, str(pm10_val))
+                                await update_state(name, "pm25", rid, id, str(pm25_val))
 
                                 if STATE_PACKET:
                                     MSG_CACHE[packet[0:10]] = packet[10:]
@@ -701,9 +713,9 @@ def ezville_loop(config):
                                         await mqtt_discovery(payload)
                                         await asyncio.sleep(DISCOVERY_DELAY)
 
-                                pwr_state = "ON" if packet[10:12] == "01" else "OFF"
+                                pwr_state = "ON" if packet[12:14] == "01" else "OFF"
 
-                                mode_val = packet[12:14]
+                                mode_val = packet[14:16]
                                 mode_map = {
                                     "01": "low",
                                     "02": "medium",
@@ -713,13 +725,8 @@ def ezville_loop(config):
                                 }
                                 mode_state = mode_map.get(mode_val, "low")
 
-                                co2_high = int(packet[20:22], 16)
-                                co2_low = int(packet[24:26], 16)
-                                co2_val = (co2_high << 8) | co2_low
-
                                 await update_state(name, "power", rid, id, pwr_state)
                                 await update_state(name, "mode", rid, id, mode_state)
-                                await update_state(name, "co2", rid, id, str(co2_val))
 
                                 if STATE_PACKET:
                                     MSG_CACHE[packet[0:10]] = packet[10:]
