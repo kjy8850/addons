@@ -639,6 +639,8 @@ def ezville_loop(config):
                                     MSG_CACHE[packet[0:10]] = packet[10:]
 
                             elif name == "purifier":
+                                if len(packet) < 30:
+                                    continue
                                 rid = int(packet[5], 16)
                                 id = 1
 
@@ -686,6 +688,8 @@ def ezville_loop(config):
                                     MSG_CACHE[packet[0:10]] = packet[10:]
 
                             elif name == "ventilator":
+                                if len(packet) < 20:
+                                    continue
                                 rid = int(packet[5], 16)
                                 id = 1
 
