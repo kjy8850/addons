@@ -658,6 +658,9 @@ def ezville_loop(config):
                                     DISCOVERY_LIST.append(discovery_name)
 
                                     for payload_template in DISCOVERY_PAYLOAD[name]:
+                                        # 안방(Unit 02)에는 미세먼지 센서가 없으므로 스킵
+                                        if rid == 2 and payload_template.get("device_class") in ["pm10", "pm25"]:
+                                            continue
                                         payload = payload_template.copy()
                                         payload["~"] = payload["~"].format(rid, id)
                                         payload["name"] = payload["name"].format(rid, id)
@@ -687,8 +690,9 @@ def ezville_loop(config):
                                 await update_state(name, "power", rid, id, pwr_state)
                                 await update_state(name, "mode", rid, id, mode_state)
                                 await update_state(name, "co2", rid, id, str(co2_val))
-                                await update_state(name, "pm10", rid, id, str(pm10_val))
-                                await update_state(name, "pm25", rid, id, str(pm25_val))
+                                if rid == 1:
+                                    await update_state(name, "pm10", rid, id, str(pm10_val))
+                                    await update_state(name, "pm25", rid, id, str(pm25_val))
 
                                 if STATE_PACKET:
                                     MSG_CACHE[packet[0:10]] = packet[10:]
