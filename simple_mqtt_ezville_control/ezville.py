@@ -32,6 +32,16 @@ RS485_DEVICE = {
         "state": {"id": "33", "cmd": "81"},
         "press": {"id": "33", "cmd": "41", "ack": "C1"},
     },
+    "purifier": {
+        "state": {"id": "61", "cmd": "81"},
+        "power": {"id": "61", "cmd": "41", "ack": "C1"},
+        "mode": {"id": "61", "cmd": "42", "ack": "C2"},
+    },
+    "ventilator": {
+        "state": {"id": "32", "cmd": "81"},
+        "power": {"id": "32", "cmd": "41", "ack": "C1"},
+        "mode": {"id": "32", "cmd": "42", "ack": "C2"},
+    },
 }
 
 # MQTT Discovery를 위한 Preset 정보
@@ -136,6 +146,46 @@ DISCOVERY_PAYLOAD = {
             "name": "ezville_batch-outing_{:0>2d}_{:0>2d}",
             "stat_t": "~/outing/state",
             "icon": "mdi:home-circle",
+        },
+    ],
+    "purifier": [
+        {
+            "_intg": "fan",
+            "~": "ezville/purifier_{:0>2d}_{:0>2d}",
+            "name": "ezville_purifier_{:0>2d}_{:0>2d}",
+            "stat_t": "~/power/state",
+            "cmd_t": "~/power/command",
+            "preset_mode_state_topic": "~/mode/state",
+            "preset_mode_command_topic": "~/mode/command",
+            "preset_modes": ["auto", "low", "medium", "high", "turbo"],
+        },
+        {
+            "_intg": "sensor",
+            "~": "ezville/purifier_{:0>2d}_{:0>2d}",
+            "name": "ezville_purifier_{:0>2d}_{:0>2d}_co2",
+            "stat_t": "~/co2/state",
+            "unit_of_meas": "ppm",
+            "device_class": "carbon_dioxide",
+        },
+    ],
+    "ventilator": [
+        {
+            "_intg": "fan",
+            "~": "ezville/ventilator_{:0>2d}_{:0>2d}",
+            "name": "ezville_ventilator_{:0>2d}_{:0>2d}",
+            "stat_t": "~/power/state",
+            "cmd_t": "~/power/command",
+            "preset_mode_state_topic": "~/mode/state",
+            "preset_mode_command_topic": "~/mode/command",
+            "preset_modes": ["low", "medium", "high", "auto", "sleep"],
+        },
+        {
+            "_intg": "sensor",
+            "~": "ezville/ventilator_{:0>2d}_{:0>2d}",
+            "name": "ezville_ventilator_{:0>2d}_{:0>2d}_co2",
+            "stat_t": "~/co2/state",
+            "unit_of_meas": "ppm",
+            "device_class": "carbon_dioxide",
         },
     ],
 }
@@ -588,6 +638,92 @@ def ezville_loop(config):
                                 if STATE_PACKET:
                                     MSG_CACHE[packet[0:10]] = packet[10:]
 
+                            elif name == "purifier":
+                                rid = int(packet[5], 16)
+                                id = 1
+
+                                discovery_name = "{}_{:0>2d}_{:0>2d}".format(
+                                    name, rid, id
+                                )
+
+                                if discovery_name not in DISCOVERY_LIST:
+                                    DISCOVERY_LIST.append(discovery_name)
+
+                                    for payload_template in DISCOVERY_PAYLOAD[name]:
+                                        payload = payload_template.copy()
+                                        payload["~"] = payload["~"].format(rid, id)
+                                        payload["name"] = payload["name"].format(rid, id)
+
+                                        # 장치 등록 후 DISCOVERY_DELAY초 후에 State 업데이트
+                                        await mqtt_discovery(payload)
+                                        await asyncio.sleep(DISCOVERY_DELAY)
+
+                                pwr_state = "ON" if packet[10:12] == "01" else "OFF"
+
+                                mode_val = packet[12:14]
+                                mode_map = {
+                                    "01": "auto",
+                                    "02": "low",
+                                    "03": "medium",
+                                    "04": "high",
+                                    "05": "turbo"
+                                }
+                                mode_state = mode_map.get(mode_val, "auto")
+
+                                co2_high = int(packet[20:22], 16)
+                                co2_low = int(packet[24:26], 16)
+                                co2_val = (co2_high << 8) | co2_low
+
+                                await update_state(name, "power", rid, id, pwr_state)
+                                await update_state(name, "mode", rid, id, mode_state)
+                                await update_state(name, "co2", rid, id, str(co2_val))
+
+                                if STATE_PACKET:
+                                    MSG_CACHE[packet[0:10]] = packet[10:]
+
+                            elif name == "ventilator":
+                                rid = int(packet[5], 16)
+                                id = 1
+
+                                discovery_name = "{}_{:0>2d}_{:0>2d}".format(
+                                    name, rid, id
+                                )
+
+                                if discovery_name not in DISCOVERY_LIST:
+                                    DISCOVERY_LIST.append(discovery_name)
+
+                                    for payload_template in DISCOVERY_PAYLOAD[name]:
+                                        payload = payload_template.copy()
+                                        payload["~"] = payload["~"].format(rid, id)
+                                        payload["name"] = payload["name"].format(rid, id)
+
+                                        # 장치 등록 후 DISCOVERY_DELAY초 후에 State 업데이트
+                                        await mqtt_discovery(payload)
+                                        await asyncio.sleep(DISCOVERY_DELAY)
+
+                                pwr_state = "ON" if packet[10:12] == "01" else "OFF"
+
+                                mode_val = packet[12:14]
+                                mode_map = {
+                                    "01": "low",
+                                    "02": "medium",
+                                    "03": "high",
+                                    "04": "auto",
+                                    "00": "sleep"
+                                }
+                                mode_state = mode_map.get(mode_val, "low")
+
+                                co2_high = int(packet[20:22], 16)
+                                co2_low = int(packet[24:26], 16)
+                                co2_val = (co2_high << 8) | co2_low
+
+                                await update_state(name, "power", rid, id, pwr_state)
+                                await update_state(name, "mode", rid, id, mode_state)
+                                await update_state(name, "co2", rid, id, str(co2_val))
+
+                                if STATE_PACKET:
+                                    MSG_CACHE[packet[0:10]] = packet[10:]
+
                             # 일괄차단기 ACK PACKET은 상태 업데이트에 반영하지 않음
                             elif name == "batch" and STATE_PACKET:
                                 # 일괄차단기는 하나라서 강제 설정
@@ -905,6 +1041,243 @@ def ezville_loop(config):
                                     sendcmd, recvcmd, statcmd
                                 )
                             )
+
+                elif device == "purifier":
+                    if topics[2] == "power":
+                        pwr_val = "01" if value == "ON" else "00"
+                        sendcmd = checksum(
+                            "F7"
+                            + RS485_DEVICE[device]["power"]["id"]
+                            + f"0{idx}"
+                            + RS485_DEVICE[device]["power"]["cmd"]
+                            + "01"
+                            + pwr_val
+                            + "0000"
+                        )
+                        recvcmd = (
+                            "F7"
+                            + RS485_DEVICE[device]["power"]["id"]
+                            + f"1{idx}"
+                            + RS485_DEVICE[device]["power"]["ack"]
+                        )
+                        statcmd = [key, value]
+
+                        await CMD_QUEUE.put(
+                            {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
+                        )
+
+                        if debug:
+                            log(
+                                "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
+                                    sendcmd, recvcmd, statcmd
+                                )
+                            )
+
+                    elif topics[2] == "mode":
+                        mode_map = {
+                            "auto": "01",
+                            "low": "02",
+                            "medium": "03",
+                            "high": "04",
+                            "turbo": "05"
+                        }
+                        mode_val = mode_map.get(value, "01")
+                        sendcmd = checksum(
+                            "F7"
+                            + RS485_DEVICE[device]["mode"]["id"]
+                            + f"0{idx}"
+                            + RS485_DEVICE[device]["mode"]["cmd"]
+                            + "01"
+                            + mode_val
+                            + "0000"
+                        )
+                        recvcmd = (
+                            "F7"
+                            + RS485_DEVICE[device]["mode"]["id"]
+                            + f"1{idx}"
+                            + RS485_DEVICE[device]["mode"]["ack"]
+                        )
+                        statcmd = [key, value]
+
+                        await CMD_QUEUE.put(
+                            {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
+                        )
+
+                        if debug:
+                            log(
+                                "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
+                                    sendcmd, recvcmd, statcmd
+                                )
+                            )
+
+                elif device == "ventilator":
+                    if topics[2] == "power":
+                        pwr_val = "01" if value == "ON" else "00"
+                        sendcmd = checksum(
+                            "F7"
+                            + RS485_DEVICE[device]["power"]["id"]
+                            + f"0{idx}"
+                            + RS485_DEVICE[device]["power"]["cmd"]
+                            + "01"
+                            + pwr_val
+                            + "0000"
+                        )
+                        recvcmd = (
+                            "F7"
+                            + RS485_DEVICE[device]["power"]["id"]
+                            + f"1{idx}"
+                            + RS485_DEVICE[device]["power"]["ack"]
+                        )
+                        statcmd = [key, value]
+
+                        await CMD_QUEUE.put(
+                            {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
+                        )
+
+                        if debug:
+                            log(
+                                "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
+                                    sendcmd, recvcmd, statcmd
+                                )
+                            )
+
+                    elif topics[2] == "mode":
+                        # 자동과 취침은 43(state/sleep) 명령어로 나가고, 약/중/강은 42(mode) 명령어로 전송
+                        if value == "auto":
+                            sendcmd = checksum(
+                                "F7"
+                                + "32"  # ventilator ID
+                                + f"0{idx}"
+                                + "43"  # 자동/취침 제어 커맨드
+                                + "010A"
+                                + "0000"
+                            )
+                            recvcmd = (
+                                "F7"
+                                + "32"
+                                + f"1{idx}"
+                                + "C3"  # 43 ack = C3
+                            )
+                        elif value == "sleep":
+                            sendcmd = checksum(
+                                "F7"
+                                + "32"
+                                + f"0{idx}"
+                                + "43"
+                                + "010C"
+                                + "0000"
+                            )
+                            recvcmd = (
+                                "F7"
+                                + "32"
+                                + f"1{idx}"
+                                + "C3"
+                            )
+                        else:
+                            mode_map = {
+                                "low": "01",
+                                "medium": "02",
+                                "high": "03"
+                            }
+                            mode_val = mode_map.get(value, "01")
+                            sendcmd = checksum(
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"0{idx}"
+                                + RS485_DEVICE[device]["mode"]["cmd"]
+                                + "01"
+                                + mode_val
+                                + "0000"
+                            )
+                            recvcmd = (
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"1{idx}"
+                                + RS485_DEVICE[device]["mode"]["ack"]
+                            )
+
+                        statcmd = [key, value]
+
+                        await CMD_QUEUE.put(
+                            {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
+                        )
+
+                        if debug:
+                            log(
+                                "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
+                                    sendcmd, recvcmd, statcmd
+                                )
+                            )
+
+                elif device == "batch":
+                    # Batch는 Elevator 및 외출/그룹 조명 버튼 상태 고려
+                    elup_state = (
+                        "1"
+                        if DEVICE_STATE.get(topics[1] + "elevator-up") == "ON"
+                        else "0"
+                    )
+                    eldown_state = (
+                        "1"
+                        if DEVICE_STATE.get(topics[1] + "elevator-down") == "ON"
+                        else "0"
+                    )
+                    out_state = (
+                        "1" if DEVICE_STATE.get(topics[1] + "outing") == "ON" else "0"
+                    )
+                    group_state = (
+                        "1" if DEVICE_STATE.get(topics[1] + "group") == "ON" else "0"
+                    )
+ 
+                    cur_state = DEVICE_STATE.get(key)
+ 
+                    # 일괄 차단기는 4가지 모드로 조절
+                    if topics[2] == "elevator-up":
+                        elup_state = "1"
+                    elif topics[2] == "elevator-down":
+                        eldown_state = "1"
+                    # 그룹 조명과 외출 모드 설정은 테스트 후에 추가 구현
+                    #                    elif topics[2] == 'group':
+                    #                        group_state = '1'
+                    #                    elif topics[2] == 'outing':
+                    #                        out_state = '1'
+ 
+                    CMD = "{:0>2X}".format(
+                        int(
+                            "00"
+                            + eldown_state
+                            + elup_state
+                            + "0"
+                            + group_state
+                            + out_state
+                            + "0",
+                            2,
+                        )
+                    )
+ 
+                    # 일괄 차단기는 state를 변경하여 제공해서 월패드에서 조작하도록 해야함
+                    # 월패드의 ACK는 무시
+                    sendcmd = checksum(
+                        "F7"
+                        + RS485_DEVICE[device]["state"]["id"]
+                        + f"0{idx}"
+                        + RS485_DEVICE[device]["state"]["cmd"]
+                        + "0300"
+                        + CMD
+                        + "000000"
+                    )
+                    recvcmd = "NULL"
+                    statcmd = [key, "NULL"]
+ 
+                    await CMD_QUEUE.put(
+                        {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
+                    )
+ 
+                    if debug:
+                        log(
+                            "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
+                                sendcmd, recvcmd, statcmd
+                            )
+                        )
 
                 elif device == "batch":
                     # Batch는 Elevator 및 외출/그룹 조명 버튼 상태 고려
