@@ -1267,37 +1267,35 @@ def ezville_loop(config):
                             )
 
                     elif topics[2] == "mode":
-                        # 자동과 취침은 43(state/sleep) 명령어로 나가고, 약/중/강은 42(mode) 명령어로 전송
+                        # 공청기와 동일한 근본원인으로 42(속도지정)만 큐에 넣고 43(확정)이
+                        # 없으면 기기가 변경을 무시함(실측 확인, 2026-08-25) - 공청기와 동일한
+                        # 42 → 1초 지연 → 43/03(수동 확정) 직접전송 방식으로 통일.
+                        # 자동/취침은 43 단일 프레임으로 충분(기존에 검증된 값 0A/0C 유지).
+                        async def _send_raw(cmd, data):
+                            raw_sendcmd = checksum(
+                                "F7"
+                                + "32"
+                                + f"0{idx}"
+                                + cmd
+                                + "01"
+                                + data
+                                + "0000"
+                            )
+                            if comm_mode == "mqtt":
+                                mqtt_client.publish(
+                                    ew11_SEND_TOPIC, bytes.fromhex(raw_sendcmd)
+                                )
+                            else:
+                                nonlocal soc
+                                soc.sendall(bytes.fromhex(raw_sendcmd))
+
+                            if debug:
+                                log("[DEBUG] 환기 모드 프레임 직접 전송: {}".format(raw_sendcmd))
+
                         if value == "auto":
-                            sendcmd = checksum(
-                                "F7"
-                                + "32"  # ventilator ID
-                                + f"0{idx}"
-                                + "43"  # 자동/취침 제어 커맨드
-                                + "010A"
-                                + "0000"
-                            )
-                            recvcmd = (
-                                "F7"
-                                + "32"
-                                + f"1{idx}"
-                                + "C3"  # 43 ack = C3
-                            )
+                            await _send_raw("43", "0A")
                         elif value == "sleep":
-                            sendcmd = checksum(
-                                "F7"
-                                + "32"
-                                + f"0{idx}"
-                                + "43"
-                                + "010C"
-                                + "0000"
-                            )
-                            recvcmd = (
-                                "F7"
-                                + "32"
-                                + f"1{idx}"
-                                + "C3"
-                            )
+                            await _send_raw("43", "0C")
                         else:
                             mode_map = {
                                 "low": "01",
@@ -1305,34 +1303,9 @@ def ezville_loop(config):
                                 "high": "03"
                             }
                             mode_val = mode_map.get(value, "01")
-                            sendcmd = checksum(
-                                "F7"
-                                + RS485_DEVICE[device]["mode"]["id"]
-                                + f"0{idx}"
-                                + RS485_DEVICE[device]["mode"]["cmd"]
-                                + "01"
-                                + mode_val
-                                + "0000"
-                            )
-                            recvcmd = (
-                                "F7"
-                                + RS485_DEVICE[device]["mode"]["id"]
-                                + f"1{idx}"
-                                + RS485_DEVICE[device]["mode"]["ack"]
-                            )
-
-                        statcmd = [key, value]
-
-                        await CMD_QUEUE.put(
-                            {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
-                        )
-
-                        if debug:
-                            log(
-                                "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
-                                    sendcmd, recvcmd, statcmd
-                                )
-                            )
+                            await _send_raw("42", mode_val)
+                            await asyncio.sleep(1)
+                            await _send_raw("43", "03")
 
                     elif topics[2] == "offtimer":
                         await handle_offtimer(device, idx, key, value)
