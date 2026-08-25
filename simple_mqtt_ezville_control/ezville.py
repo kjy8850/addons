@@ -1207,11 +1207,14 @@ def ezville_loop(config):
                                 log("[DEBUG] 취침/모드 프레임 직접 전송: {}".format(raw_sendcmd))
 
                         if value == "sleep":
+                            # 원래 3번째 프레임으로 넣었던 45/00은 사실 "취침 전용 companion"이
+                            # 아니라 꺼짐예약(오프타이머) cmd 그 자체였음(45=오프타이머, data=00=
+                            # 취소) - Phase 0 캡처 당시 우연히 활성 예약이 없어서 부작용이 안 보였을
+                            # 뿐, 실제로는 취침 진입 시 활성 예약을 조용히 취소해버리는 부작용이 있었음
+                            # (실측 확인, 2026-08-25). 제거.
                             await _send_raw("42", "01")
                             await asyncio.sleep(1)
                             await _send_raw("43", "23")
-                            await asyncio.sleep(1)
-                            await _send_raw("45", "00")
 
                         elif value == "auto":
                             await _send_raw("43", "43")
