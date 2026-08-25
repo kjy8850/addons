@@ -1270,7 +1270,8 @@ def ezville_loop(config):
                         # 공청기와 동일한 근본원인으로 42(속도지정)만 큐에 넣고 43(확정)이
                         # 없으면 기기가 변경을 무시함(실측 확인, 2026-08-25) - 공청기와 동일한
                         # 42 → 1초 지연 → 43/03(수동 확정) 직접전송 방식으로 통일.
-                        # 자동/취침은 43 단일 프레임으로 충분(기존에 검증된 값 0A/0C 유지).
+                        # 자동/취침 43 값이 뒤바뀌어 있었음(실측 확인, 2026-08-25: 자동 누르면
+                        # 취침으로, 취침 누르면 자동으로 표시됨) - 0A/0C 스왑으로 수정.
                         async def _send_raw(cmd, data):
                             raw_sendcmd = checksum(
                                 "F7"
@@ -1293,9 +1294,9 @@ def ezville_loop(config):
                                 log("[DEBUG] 환기 모드 프레임 직접 전송: {}".format(raw_sendcmd))
 
                         if value == "auto":
-                            await _send_raw("43", "0A")
-                        elif value == "sleep":
                             await _send_raw("43", "0C")
+                        elif value == "sleep":
+                            await _send_raw("43", "0A")
                         # TEMP 진단용(2026-08-25): 42/03(수동확정) 조합이 "취침"으로 귀결되는
                         # 원인을 단일 프레임 단위로 격리 테스트하기 위해 low/medium/high를
                         # 임시로 재배선함 - 정상 매핑 확정되면 원복할 것.
