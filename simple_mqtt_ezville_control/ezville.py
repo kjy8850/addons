@@ -45,14 +45,13 @@ RS485_DEVICE = {
 }
 
 # 공기청정기/환기장치 꺼짐 예약(오프타이머) 옵션 - 첫 항목은 "사용 안 함"
-OFFTIMER_OPTIONS = [
-    "끄지 않음",
-    "1시간 후 꺼짐",
-    "2시간 후 꺼짐",
-    "3시간 후 꺼짐",
-    "4시간 후 꺼짐",
-    "5시간 후 꺼짐",
-    "6시간 후 꺼짐",
+# 실측 확인(2026-08-25, 자이홈 앱 패킷 캡처): 이건 addon이 카운트다운하는 소프트웨어
+# 타이머가 아니라 기기 자체가 지원하는 진짜 하드웨어 명령임 - 공기청정기는 cmd 45,
+# 환기장치는 cmd 44에 시간수(0~N)를 그대로 실어 보내면 기기가 알아서 카운트다운하고
+# 꺼줌(0=예약취소). addon은 명령만 한 번 보내면 되고 카운트다운을 직접 관리할 필요 없음.
+OFFTIMER_MAX_HOURS = 12
+OFFTIMER_OPTIONS = ["끄지 않음"] + [
+    "{}시간 후 꺼짐".format(h) for h in range(1, OFFTIMER_MAX_HOURS + 1)
 ]
 
 
@@ -60,7 +59,7 @@ def offtimer_hours(value):
     if value == OFFTIMER_OPTIONS[0]:
         return 0
     try:
-        return int(value[0])
+        return int(value.split("시간")[0])
     except (ValueError, IndexError):
         return 0
 
@@ -304,9 +303,6 @@ def ezville_loop(config):
 
     # State 저장용 공간
     DEVICE_STATE = {}
-
-    # 공기청정기/환기장치 꺼짐 예약(오프타이머) 진행중인 asyncio Task 저장소
-    OFFTIMER_TASKS = {}
 
     # 이전에 전달된 패킷인지 판단을 위한 캐쉬
     MSG_CACHE = {}
@@ -874,61 +870,49 @@ def ezville_loop(config):
         return
 
     # 공기청정기/환기장치 꺼짐 예약(오프타이머) 처리
-    # select 선택 즉시 반영: 기존 예약은 취소하고, "끄지 않음"이 아니면 새로 카운트다운 시작.
-    # 카운트다운 종료 시 기존 전원 OFF 패킷을 그대로 재사용해 실제로 끄고, select 값도 "끄지 않음"으로 되돌림.
+    # 실측 확인(2026-08-25, 자이홈 앱 패킷 캡처): addon이 직접 카운트다운하는 소프트웨어
+    # 타이머가 아니라 기기 자체가 지원하는 진짜 하드웨어 타이머 명령이었음 - 공기청정기는
+    # cmd 45, 환기장치는 cmd 44에 시간수(0~12, 0=예약취소)를 실어 보내면 기기가 알아서
+    # 카운트다운하고 꺼줌. addon은 명령만 보내면 되고, 실제 만료/전원차단은 기기가 처리하므로
+    # HA/addon이 꺼져있거나 재시작해도 예약이 그대로 유지됨(기존 소프트웨어 방식보다 견고함).
+    # 응답 패킷에서 예약 시간수를 그대로 읽어올 방법이 없어 ack 매칭 재시도가 불가 -
+    # 대신 CMD_QUEUE를 거치지 않고 직접 전송 + 1초 텀을 두고 한 번 더 전송(실측상 첫 전송이
+    # 간혹 씹히는 경우가 있어 안정성을 위해 재전송, 이 명령은 멱등이라 반복 전송 안전함).
+    OFFTIMER_CMD = {"purifier": "45", "ventilator": "44"}
+
     async def handle_offtimer(device, idx, key, value):
-        nonlocal CMD_QUEUE
         nonlocal DEVICE_STATE
-        nonlocal OFFTIMER_TASKS
 
         deviceID = key[: -len("offtimer")]
         state_topic = STATE_TOPIC.format(deviceID, "offtimer")
+        hours = offtimer_hours(value)
 
-        existing = OFFTIMER_TASKS.get(key)
-        if existing and not existing.done():
-            existing.cancel()
+        sendcmd = checksum(
+            "F7"
+            + RS485_DEVICE[device]["power"]["id"]
+            + f"0{idx}"
+            + OFFTIMER_CMD[device]
+            + "01"
+            + "{:02X}".format(hours)
+            + "0000"
+        )
+
+        for attempt in range(2):
+            if attempt > 0:
+                await asyncio.sleep(1)
+            if comm_mode == "mqtt":
+                mqtt_client.publish(ew11_SEND_TOPIC, bytes.fromhex(sendcmd))
+            else:
+                nonlocal soc
+                soc.sendall(bytes.fromhex(sendcmd))
 
         mqtt_client.publish(state_topic, value.encode())
         DEVICE_STATE[key] = value
 
-        hours = offtimer_hours(value)
-        if hours <= 0:
-            OFFTIMER_TASKS.pop(key, None)
-            return
-
-        async def _fire():
-            try:
-                await asyncio.sleep(hours * 3600)
-            except asyncio.CancelledError:
-                return
-
-            sendcmd = checksum(
-                "F7"
-                + RS485_DEVICE[device]["power"]["id"]
-                + f"0{idx}"
-                + RS485_DEVICE[device]["power"]["cmd"]
-                + "01"
-                + "00"  # power off
-                + "0000"
-            )
-            recvcmd = (
-                "F7"
-                + RS485_DEVICE[device]["power"]["id"]
-                + f"1{idx}"
-                + RS485_DEVICE[device]["power"]["ack"]
-            )
-            statcmd = [deviceID + "power", "OFF"]
-
-            await CMD_QUEUE.put(
-                {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
-            )
-
-            mqtt_client.publish(state_topic, OFFTIMER_OPTIONS[0].encode())
-            DEVICE_STATE[key] = OFFTIMER_OPTIONS[0]
-
-            log("[INFO] 꺼짐 예약 종료 ::: {} 전원 OFF 전송".format(deviceID))
-
-        OFFTIMER_TASKS[key] = asyncio.create_task(_fire())
+        if debug:
+            log("[DEBUG] 꺼짐예약 전송 ::: {} {}시간 (cmd {})".format(
+                deviceID, hours, OFFTIMER_CMD[device]
+            ))
 
     # HA에서 전달된 메시지 처리
     async def HA_process(topics, value):
@@ -1768,12 +1752,6 @@ def ezville_loop(config):
         MSG_CACHE = {}
         DISCOVERY_LIST = []
         RESIDUE = ""
-
-        # 진행중이던 꺼짐 예약 Task는 재시작 시 정리 (재등록 시 초기값으로 다시 시작됨)
-        for offtimer_task in OFFTIMER_TASKS.values():
-            if not offtimer_task.done():
-                offtimer_task.cancel()
-        OFFTIMER_TASKS = {}
 
 
 if __name__ == "__main__":
