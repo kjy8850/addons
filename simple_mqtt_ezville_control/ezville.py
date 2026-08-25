@@ -1296,15 +1296,17 @@ def ezville_loop(config):
                             await _send_raw("43", "0A")
                         elif value == "sleep":
                             await _send_raw("43", "0C")
+                        # TEMP 진단용(2026-08-25): 42/03(수동확정) 조합이 "취침"으로 귀결되는
+                        # 원인을 단일 프레임 단위로 격리 테스트하기 위해 low/medium/high를
+                        # 임시로 재배선함 - 정상 매핑 확정되면 원복할 것.
+                        elif value == "low":
+                            # TEST A: cmd42/02 단독(43 확정프레임 없음)
+                            await _send_raw("42", "02")
+                        elif value == "medium":
+                            # TEST B: cmd42/03 단독(43 확정프레임 없음)
+                            await _send_raw("42", "03")
                         else:
-                            mode_map = {
-                                "low": "01",
-                                "medium": "02",
-                                "high": "03"
-                            }
-                            mode_val = mode_map.get(value, "01")
-                            await _send_raw("42", mode_val)
-                            await asyncio.sleep(1)
+                            # TEST C(value == "high"): cmd43/03 단독(42 없음)
                             await _send_raw("43", "03")
 
                     elif topics[2] == "offtimer":
