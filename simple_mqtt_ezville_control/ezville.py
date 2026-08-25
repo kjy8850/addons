@@ -711,21 +711,17 @@ def ezville_loop(config):
                                 pwr_state = "ON" if packet[12:14] == "01" else "OFF"
 
                                 mode_val = packet[14:16]
+                                # 실제 시스클라인 패널로 직접 검증(2026-08-25): 자동 전환(43/43)
+                                # 시 mode=00, 취침 진입 시퀀스(42/01 시작) 후 mode=01 로 확인됨.
                                 mode_map = {
-                                    "01": "auto",
+                                    "00": "auto",
+                                    "01": "sleep",
                                     "02": "low",
                                     "03": "medium",
                                     "04": "high",
                                     "05": "turbo"
                                 }
                                 mode_state = mode_map.get(mode_val, "auto")
-
-                                # 취침은 mode(42)가 아니라 별도 명령(43)으로 걸리기 때문에
-                                # mode 필드만으론 자동과 구분이 안 됨 - Byte3 상위 플래그(0x02)로
-                                # 구분(자이홈 앱 실측, 2026-08-25)
-                                flag_val = int(packet[16:18], 16)
-                                if mode_val == "01" and flag_val & 0x02:
-                                    mode_state = "sleep"
 
                                 pm10_val = int(packet[22:24], 16)
                                 co2_high = int(packet[24:26], 16)
@@ -1195,109 +1191,77 @@ def ezville_loop(config):
                             )
 
                     elif topics[2] == "mode":
-                        # 취침(sleep)은 mode(42) 명령의 값 변형이 아니라 완전히 다른 명령(43)임 -
-                        # 위키에 예전부터 있던 원본 프로토콜 기록과 실측이 일치(자동=42/01,
-                        # 취침=43/23). 오늘 세션 중 "mode값 00=자동/01=취침"으로 잘못 재해석했다가
-                        # (42/01을 취침 진입의 마지막 프레임으로 덧붙임) 그 42/01이 "자동" 명령과
-                        # 그대로 충돌해서 계속 취침↔자동 사이를 왔다갔다하는 원인이 됐음 - 되돌림.
+                        # 실측 확인(2026-08-25, 실제 시스클라인 패널로 직접 검증):
+                        # - 42(mode)는 "속도값"이 아니라 사실상 대분류 전환의 필수 선행 프레임이고,
+                        #   43(data)이 최종적으로 화면에 보이는 대분류를 결정함:
+                        #   43/23=취침, 43/43=자동, 43/03=수동(42로 지정한 속도 확정)
+                        # - 프레임 사이 텀이 너무 좁으면 기기가 못 따라가고 이전 상태에 머무름
+                        #   (여러 차례 실측으로 확인) → 프레임 사이 1초 지연 필요.
+                        # - 진입 성공 순서: 42/01 → (1초) → 43/23 → (1초) → 45/00
+                        # - 수동 속도 전환 성공 순서: 42/0X → (1초) → 43/03 (한 번에 안 먹으면 재전송)
+                        async def _send_raw(cmd, data, ack):
+                            raw_sendcmd = checksum(
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"0{idx}"
+                                + cmd
+                                + "01"
+                                + data
+                                + "0000"
+                            )
+                            raw_recvcmd = (
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"1{idx}"
+                                + ack
+                            )
+                            await CMD_QUEUE.put(
+                                {
+                                    "sendcmd": raw_sendcmd,
+                                    "recvcmd": raw_recvcmd,
+                                    "statcmd": [key, "NULL"],
+                                }
+                            )
+
                         if value == "sleep":
-                            for step_cmd, step_data, step_ack in (
-                                ("43", "23", "C3"),
-                                ("45", "00", "C5"),
-                            ):
-                                step_sendcmd = checksum(
-                                    "F7"
-                                    + RS485_DEVICE[device]["mode"]["id"]
-                                    + f"0{idx}"
-                                    + step_cmd
-                                    + "01"
-                                    + step_data
-                                    + "0000"
-                                )
-                                step_recvcmd = (
-                                    "F7"
-                                    + RS485_DEVICE[device]["mode"]["id"]
-                                    + f"1{idx}"
-                                    + step_ack
-                                )
-                                # 대응하는 DEVICE_STATE 키가 없어 ack 대기 없이 1회만 전송
-                                await CMD_QUEUE.put(
-                                    {
-                                        "sendcmd": step_sendcmd,
-                                        "recvcmd": step_recvcmd,
-                                        "statcmd": [key, "NULL"],
-                                    }
-                                )
+                            await _send_raw("42", "01", "C2")
+                            await asyncio.sleep(1)
+                            await _send_raw("43", "23", "C3")
+                            await asyncio.sleep(1)
+                            await _send_raw("45", "00", "C5")
 
                             if debug:
-                                log(
-                                    "[DEBUG] Queued ::: 취침 진입(43/23, 45/00)"
-                                )
+                                log("[DEBUG] Queued ::: 취침 진입(42/01, 43/23, 45/00)")
+
+                        elif value == "auto":
+                            await _send_raw("43", "43", "C3")
+                            await asyncio.sleep(1.5)
+                            await _send_raw("43", "43", "C3")
+
+                            if debug:
+                                log("[DEBUG] Queued ::: 자동 전환(43/43 x2)")
+
                         else:
                             mode_map = {
-                                "auto": "01",
                                 "low": "02",
                                 "medium": "03",
                                 "high": "04",
                                 "turbo": "05"
                             }
-                            mode_val = mode_map.get(value, "01")
+                            mode_val = mode_map.get(value, "02")
 
-                            sendcmd = checksum(
-                                "F7"
-                                + RS485_DEVICE[device]["mode"]["id"]
-                                + f"0{idx}"
-                                + RS485_DEVICE[device]["mode"]["cmd"]
-                                + "01"
-                                + mode_val
-                                + "0000"
-                            )
-                            recvcmd = (
-                                "F7"
-                                + RS485_DEVICE[device]["mode"]["id"]
-                                + f"1{idx}"
-                                + RS485_DEVICE[device]["mode"]["ack"]
-                            )
-                            statcmd = [key, value]
-
-                            await CMD_QUEUE.put(
-                                {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
-                            )
+                            await _send_raw("42", mode_val, "C2")
+                            await asyncio.sleep(1)
+                            await _send_raw("43", "03", "C3")
+                            await asyncio.sleep(1.5)
+                            await _send_raw("43", "03", "C3")
 
                             if debug:
                                 log(
-                                    "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
-                                        sendcmd, recvcmd, statcmd
+                                    "[DEBUG] Queued ::: 수동 속도 전환(42/{}, 43/03 x2)".format(
+                                        mode_val
                                     )
                                 )
-
-                        # 취침 → 다른 모드 전환: 42(mode) 프레임 하나만으로는 기기가 취침을
-                        # 계속 재적용해서 도로 취침으로 돌아옴(실측 확인, 2026-08-25). 자이홈 앱을
-                        # 그대로 재현: 42(mode) 다음에 43/03 동반 프레임을 보내야 취침이 완전히
-                        # 해제되고 안정적으로 유지됨.
-                        if cur_state == "sleep" and value != "sleep":
-                            exit_sendcmd = checksum(
-                                "F7"
-                                + RS485_DEVICE[device]["mode"]["id"]
-                                + f"0{idx}"
-                                + "43"
-                                + "01"
-                                + "03"
-                                + "0000"
-                            )
-                            exit_recvcmd = (
-                                "F7"
-                                + RS485_DEVICE[device]["mode"]["id"]
-                                + f"1{idx}"
-                                + "C3"
-                            )
-                            await CMD_QUEUE.put(
-                                {
-                                    "sendcmd": exit_sendcmd,
-                                    "recvcmd": exit_recvcmd,
-                                    "statcmd": [key, "NULL"],
-                                }
-                            )
 
                     elif topics[2] == "offtimer":
                         await handle_offtimer(device, idx, key, value)
