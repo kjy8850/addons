@@ -1194,6 +1194,41 @@ def ezville_loop(config):
                         # mode 필드 00/01은 원래 둘 다 "auto"로 뭉뚱그려 매핑되어 있었으나,
                         # 실측(자이홈 앱, 2026-08-25) 결과 00=자동/01=취침으로 서로 다른 값이었음
                         # (기존 mode_map.get(value,"01") 기본값 탓에 둘 다 "자동"으로만 보였던 것).
+                        #
+                        # 다만 실측 결과, 단순히 42(mode)/01 한 프레임만 보내서는 "취침" 진입이
+                        # 안 먹힘(자동↔약/중/강/터보 사이 전환과 달리, 자동→취침만 별도 프레임이
+                        # 필요한 것으로 보임) - 자이홈 앱이 실제로 보내는 순서(43/23 → 45/00 → 42/01)를
+                        # 그대로 재생. "취침 → 자동"으로 되돌리는 전환은 아직 안정적으로 재현이 안 돼서
+                        # 미구현으로 남김(다른 속도로 먼저 바꾼 뒤 자동으로 가는 경로는 정상 동작).
+                        if value == "sleep":
+                            for step_cmd, step_data, step_ack in (
+                                ("43", "23", "C3"),
+                                ("45", "00", "C5"),
+                            ):
+                                step_sendcmd = checksum(
+                                    "F7"
+                                    + RS485_DEVICE[device]["mode"]["id"]
+                                    + f"0{idx}"
+                                    + step_cmd
+                                    + "01"
+                                    + step_data
+                                    + "0000"
+                                )
+                                step_recvcmd = (
+                                    "F7"
+                                    + RS485_DEVICE[device]["mode"]["id"]
+                                    + f"1{idx}"
+                                    + step_ack
+                                )
+                                # 대응하는 DEVICE_STATE 키가 없어 ack 대기 없이 1회만 전송
+                                await CMD_QUEUE.put(
+                                    {
+                                        "sendcmd": step_sendcmd,
+                                        "recvcmd": step_recvcmd,
+                                        "statcmd": [key, "NULL"],
+                                    }
+                                )
+
                         mode_map = {
                             "auto": "00",
                             "sleep": "01",
