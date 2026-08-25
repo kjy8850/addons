@@ -1199,7 +1199,9 @@ def ezville_loop(config):
                         #   (여러 차례 실측으로 확인) → 프레임 사이 1초 지연 필요.
                         # - 진입 성공 순서: 42/01 → (1초) → 43/23 → (1초) → 45/00
                         # - 수동 속도 전환 성공 순서: 42/0X → (1초) → 43/03 (한 번에 안 먹으면 재전송)
-                        async def _send_raw(cmd, data, ack):
+                        # CMD_QUEUE는 다른 대기중인 명령과 뒤섞이면 프레임 사이 실제 전송
+                        # 간격이 틀어짐(실측으로 확인) - 큐를 거치지 않고 직접 실시간 간격으로 전송
+                        async def _send_raw(cmd, data):
                             raw_sendcmd = checksum(
                                 "F7"
                                 + RS485_DEVICE[device]["mode"]["id"]
@@ -1209,37 +1211,26 @@ def ezville_loop(config):
                                 + data
                                 + "0000"
                             )
-                            raw_recvcmd = (
-                                "F7"
-                                + RS485_DEVICE[device]["mode"]["id"]
-                                + f"1{idx}"
-                                + ack
-                            )
-                            await CMD_QUEUE.put(
-                                {
-                                    "sendcmd": raw_sendcmd,
-                                    "recvcmd": raw_recvcmd,
-                                    "statcmd": [key, "NULL"],
-                                }
-                            )
+                            if comm_mode == "mqtt":
+                                mqtt_client.publish(
+                                    ew11_SEND_TOPIC, bytes.fromhex(raw_sendcmd)
+                                )
+                            else:
+                                nonlocal soc
+                                soc.sendall(bytes.fromhex(raw_sendcmd))
+
+                            if debug:
+                                log("[DEBUG] 취침/모드 프레임 직접 전송: {}".format(raw_sendcmd))
 
                         if value == "sleep":
-                            await _send_raw("42", "01", "C2")
+                            await _send_raw("42", "01")
                             await asyncio.sleep(1)
-                            await _send_raw("43", "23", "C3")
+                            await _send_raw("43", "23")
                             await asyncio.sleep(1)
-                            await _send_raw("45", "00", "C5")
-
-                            if debug:
-                                log("[DEBUG] Queued ::: 취침 진입(42/01, 43/23, 45/00)")
+                            await _send_raw("45", "00")
 
                         elif value == "auto":
-                            await _send_raw("43", "43", "C3")
-                            await asyncio.sleep(1.5)
-                            await _send_raw("43", "43", "C3")
-
-                            if debug:
-                                log("[DEBUG] Queued ::: 자동 전환(43/43 x2)")
+                            await _send_raw("43", "43")
 
                         else:
                             mode_map = {
@@ -1250,18 +1241,9 @@ def ezville_loop(config):
                             }
                             mode_val = mode_map.get(value, "02")
 
-                            await _send_raw("42", mode_val, "C2")
+                            await _send_raw("42", mode_val)
                             await asyncio.sleep(1)
-                            await _send_raw("43", "03", "C3")
-                            await asyncio.sleep(1.5)
-                            await _send_raw("43", "03", "C3")
-
-                            if debug:
-                                log(
-                                    "[DEBUG] Queued ::: 수동 속도 전환(42/{}, 43/03 x2)".format(
-                                        mode_val
-                                    )
-                                )
+                            await _send_raw("43", "03")
 
                     elif topics[2] == "offtimer":
                         await handle_offtimer(device, idx, key, value)
