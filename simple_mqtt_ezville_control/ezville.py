@@ -1267,11 +1267,12 @@ def ezville_loop(config):
                             )
 
                     elif topics[2] == "mode":
-                        # 공청기와 동일한 근본원인으로 42(속도지정)만 큐에 넣고 43(확정)이
-                        # 없으면 기기가 변경을 무시함(실측 확인, 2026-08-25) - 공청기와 동일한
-                        # 42 → 1초 지연 → 43/03(수동 확정) 직접전송 방식으로 통일.
-                        # 자동/취침 43 값이 뒤바뀌어 있었음(실측 확인, 2026-08-25: 자동 누르면
-                        # 취침으로, 취침 누르면 자동으로 표시됨) - 0A/0C 스왑으로 수정.
+                        # 자이홈 앱 실제 패킷 캡처로 프로토콜 확정(2026-08-25,
+                        # mosquitto_sub로 ew12/# 캡처하며 자동→취침→약→중→강→끄기 순서로
+                        # 직접 눌러 검증): 공청기와 달리 42(속도)에 43 확정 프레임이 전혀
+                        # 필요 없는 단일 프레임 프로토콜이었음. 43/03은 "수동확정"이 아니라
+                        # 환기장치 자체의 "취침" 명령이었음 - 이걸 몰라서 이전 버전들에서
+                        # 42 뒤에 43/03을 확정프레임으로 덧붙였다가 취침으로 계속 덮어써졌었음.
                         async def _send_raw(cmd, data):
                             raw_sendcmd = checksum(
                                 "F7"
@@ -1293,22 +1294,15 @@ def ezville_loop(config):
                             if debug:
                                 log("[DEBUG] 환기 모드 프레임 직접 전송: {}".format(raw_sendcmd))
 
-                        if value == "auto":
-                            await _send_raw("43", "0C")
-                        elif value == "sleep":
-                            await _send_raw("43", "0A")
-                        # TEMP 진단용(2026-08-25): 42/03(수동확정) 조합이 "취침"으로 귀결되는
-                        # 원인을 단일 프레임 단위로 격리 테스트하기 위해 low/medium/high를
-                        # 임시로 재배선함 - 정상 매핑 확정되면 원복할 것.
-                        elif value == "low":
-                            # TEST A: cmd42/02 단독(43 확정프레임 없음)
-                            await _send_raw("42", "02")
-                        elif value == "medium":
-                            # TEST B: cmd42/03 단독(43 확정프레임 없음)
-                            await _send_raw("42", "03")
-                        else:
-                            # TEST C(value == "high"): cmd43/03 단독(42 없음)
-                            await _send_raw("43", "03")
+                        mode_frame = {
+                            "auto": ("43", "0A"),
+                            "sleep": ("43", "03"),
+                            "low": ("42", "01"),
+                            "medium": ("42", "02"),
+                            "high": ("42", "03"),
+                        }
+                        cmd, data = mode_frame.get(value, ("42", "01"))
+                        await _send_raw(cmd, data)
 
                     elif topics[2] == "offtimer":
                         await handle_offtimer(device, idx, key, value)
