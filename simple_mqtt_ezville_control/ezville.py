@@ -178,7 +178,7 @@ DISCOVERY_PAYLOAD = {
             "cmd_t": "~/power/command",
             "preset_mode_state_topic": "~/mode/state",
             "preset_mode_command_topic": "~/mode/command",
-            "preset_modes": ["auto", "low", "medium", "high", "turbo"],
+            "preset_modes": ["auto", "low", "medium", "high", "turbo", "sleep"],
         },
         {
             "_intg": "select",
@@ -720,6 +720,11 @@ def ezville_loop(config):
                                 }
                                 mode_state = mode_map.get(mode_val, "auto")
 
+                                # Byte3 상위 플래그(0x02)가 켜져있으면 취침 모드(자이홈 앱으로 실측 확인, 2026-08-25)
+                                flag_val = int(packet[16:18], 16)
+                                if mode_val == "01" and flag_val & 0x02:
+                                    mode_state = "sleep"
+
                                 pm10_val = int(packet[22:24], 16)
                                 co2_high = int(packet[24:26], 16)
                                 co2_low = int(packet[26:28], 16)
@@ -1188,14 +1193,49 @@ def ezville_loop(config):
                             )
 
                     elif topics[2] == "mode":
-                        mode_map = {
-                            "auto": "01",
-                            "low": "02",
-                            "medium": "03",
-                            "high": "04",
-                            "turbo": "05"
-                        }
-                        mode_val = mode_map.get(value, "01")
+                        # 취침 모드: 자이홈 앱 실측(2026-08-25)으로 확인된 3프레임 시퀀스를 그대로 재생
+                        # (43/23 → 45/00 → 42/01). 43·45의 정확한 의미는 불명이나, 이 순서로
+                        # 보내야 실기기가 취침 모드로 안착함을 실측으로 확인함.
+                        if value == "sleep":
+                            for step_cmd, step_data, step_ack in (
+                                ("43", "23", "C3"),
+                                ("45", "00", "C5"),
+                            ):
+                                step_sendcmd = checksum(
+                                    "F7"
+                                    + RS485_DEVICE[device]["mode"]["id"]
+                                    + f"0{idx}"
+                                    + step_cmd
+                                    + "01"
+                                    + step_data
+                                    + "0000"
+                                )
+                                step_recvcmd = (
+                                    "F7"
+                                    + RS485_DEVICE[device]["mode"]["id"]
+                                    + f"1{idx}"
+                                    + step_ack
+                                )
+                                # 대응하는 DEVICE_STATE 키가 없어 ack 대기 없이 1회만 전송
+                                await CMD_QUEUE.put(
+                                    {
+                                        "sendcmd": step_sendcmd,
+                                        "recvcmd": step_recvcmd,
+                                        "statcmd": [key, "NULL"],
+                                    }
+                                )
+
+                            mode_val = "01"
+                        else:
+                            mode_map = {
+                                "auto": "01",
+                                "low": "02",
+                                "medium": "03",
+                                "high": "04",
+                                "turbo": "05"
+                            }
+                            mode_val = mode_map.get(value, "01")
+
                         sendcmd = checksum(
                             "F7"
                             + RS485_DEVICE[device]["mode"]["id"]
@@ -1211,7 +1251,9 @@ def ezville_loop(config):
                             + f"1{idx}"
                             + RS485_DEVICE[device]["mode"]["ack"]
                         )
-                        statcmd = [key, value]
+                        # 취침 모드는 mode 필드상 "auto"(01)와 동일하므로 DEVICE_STATE 확인은
+                        # "auto"를 기다림 - 실제 preset_mode는 상태 패킷의 Byte3 플래그로 "sleep"으로 보정됨
+                        statcmd = [key, "auto" if value == "sleep" else value]
 
                         await CMD_QUEUE.put(
                             {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
