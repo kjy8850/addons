@@ -711,17 +711,21 @@ def ezville_loop(config):
                                 pwr_state = "ON" if packet[12:14] == "01" else "OFF"
 
                                 mode_val = packet[14:16]
-                                # 00/01 둘 다 예전엔 fallback으로 "auto"에 뭉뚱그려졌으나,
-                                # 실측(자이홈 앱, 2026-08-25) 결과 00=자동/01=취침으로 서로 다른 값이었음
                                 mode_map = {
-                                    "00": "auto",
-                                    "01": "sleep",
+                                    "01": "auto",
                                     "02": "low",
                                     "03": "medium",
                                     "04": "high",
                                     "05": "turbo"
                                 }
                                 mode_state = mode_map.get(mode_val, "auto")
+
+                                # 취침은 mode(42)가 아니라 별도 명령(43)으로 걸리기 때문에
+                                # mode 필드만으론 자동과 구분이 안 됨 - Byte3 상위 플래그(0x02)로
+                                # 구분(자이홈 앱 실측, 2026-08-25)
+                                flag_val = int(packet[16:18], 16)
+                                if mode_val == "01" and flag_val & 0x02:
+                                    mode_state = "sleep"
 
                                 pm10_val = int(packet[22:24], 16)
                                 co2_high = int(packet[24:26], 16)
@@ -1191,15 +1195,11 @@ def ezville_loop(config):
                             )
 
                     elif topics[2] == "mode":
-                        # mode 필드 00/01은 원래 둘 다 "auto"로 뭉뚱그려 매핑되어 있었으나,
-                        # 실측(자이홈 앱, 2026-08-25) 결과 00=자동/01=취침으로 서로 다른 값이었음
-                        # (기존 mode_map.get(value,"01") 기본값 탓에 둘 다 "자동"으로만 보였던 것).
-                        #
-                        # 다만 실측 결과, 단순히 42(mode)/01 한 프레임만 보내서는 "취침" 진입이
-                        # 안 먹힘(자동↔약/중/강/터보 사이 전환과 달리, 자동→취침만 별도 프레임이
-                        # 필요한 것으로 보임) - 자이홈 앱이 실제로 보내는 순서(43/23 → 45/00 → 42/01)를
-                        # 그대로 재생. "취침 → 자동"으로 되돌리는 전환은 아직 안정적으로 재현이 안 돼서
-                        # 미구현으로 남김(다른 속도로 먼저 바꾼 뒤 자동으로 가는 경로는 정상 동작).
+                        # 취침(sleep)은 mode(42) 명령의 값 변형이 아니라 완전히 다른 명령(43)임 -
+                        # 위키에 예전부터 있던 원본 프로토콜 기록과 실측이 일치(자동=42/01,
+                        # 취침=43/23). 오늘 세션 중 "mode값 00=자동/01=취침"으로 잘못 재해석했다가
+                        # (42/01을 취침 진입의 마지막 프레임으로 덧붙임) 그 42/01이 "자동" 명령과
+                        # 그대로 충돌해서 계속 취침↔자동 사이를 왔다갔다하는 원인이 됐음 - 되돌림.
                         if value == "sleep":
                             for step_cmd, step_data, step_ack in (
                                 ("43", "23", "C3"),
@@ -1229,43 +1229,47 @@ def ezville_loop(config):
                                     }
                                 )
 
-                        mode_map = {
-                            "auto": "00",
-                            "sleep": "01",
-                            "low": "02",
-                            "medium": "03",
-                            "high": "04",
-                            "turbo": "05"
-                        }
-                        mode_val = mode_map.get(value, "00")
-
-                        sendcmd = checksum(
-                            "F7"
-                            + RS485_DEVICE[device]["mode"]["id"]
-                            + f"0{idx}"
-                            + RS485_DEVICE[device]["mode"]["cmd"]
-                            + "01"
-                            + mode_val
-                            + "0000"
-                        )
-                        recvcmd = (
-                            "F7"
-                            + RS485_DEVICE[device]["mode"]["id"]
-                            + f"1{idx}"
-                            + RS485_DEVICE[device]["mode"]["ack"]
-                        )
-                        statcmd = [key, value]
-
-                        await CMD_QUEUE.put(
-                            {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
-                        )
-
-                        if debug:
-                            log(
-                                "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
-                                    sendcmd, recvcmd, statcmd
+                            if debug:
+                                log(
+                                    "[DEBUG] Queued ::: 취침 진입(43/23, 45/00)"
                                 )
+                        else:
+                            mode_map = {
+                                "auto": "01",
+                                "low": "02",
+                                "medium": "03",
+                                "high": "04",
+                                "turbo": "05"
+                            }
+                            mode_val = mode_map.get(value, "01")
+
+                            sendcmd = checksum(
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"0{idx}"
+                                + RS485_DEVICE[device]["mode"]["cmd"]
+                                + "01"
+                                + mode_val
+                                + "0000"
                             )
+                            recvcmd = (
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"1{idx}"
+                                + RS485_DEVICE[device]["mode"]["ack"]
+                            )
+                            statcmd = [key, value]
+
+                            await CMD_QUEUE.put(
+                                {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
+                            )
+
+                            if debug:
+                                log(
+                                    "[DEBUG] Queued ::: sendcmd: {}, recvcmd: {}, statcmd: {}".format(
+                                        sendcmd, recvcmd, statcmd
+                                    )
+                                )
 
                         # 취침 → 다른 모드 전환: 42(mode) 프레임 하나만으로는 기기가 취침을
                         # 계속 재적용해서 도로 취침으로 돌아옴(실측 확인, 2026-08-25). 자이홈 앱을
