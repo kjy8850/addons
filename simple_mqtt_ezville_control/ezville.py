@@ -1267,6 +1267,34 @@ def ezville_loop(config):
                                 )
                             )
 
+                        # 취침 → 다른 모드 전환: 42(mode) 프레임 하나만으로는 기기가 취침을
+                        # 계속 재적용해서 도로 취침으로 돌아옴(실측 확인, 2026-08-25). 자이홈 앱을
+                        # 그대로 재현: 42(mode) 다음에 43/03 동반 프레임을 보내야 취침이 완전히
+                        # 해제되고 안정적으로 유지됨.
+                        if cur_state == "sleep" and value != "sleep":
+                            exit_sendcmd = checksum(
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"0{idx}"
+                                + "43"
+                                + "01"
+                                + "03"
+                                + "0000"
+                            )
+                            exit_recvcmd = (
+                                "F7"
+                                + RS485_DEVICE[device]["mode"]["id"]
+                                + f"1{idx}"
+                                + "C3"
+                            )
+                            await CMD_QUEUE.put(
+                                {
+                                    "sendcmd": exit_sendcmd,
+                                    "recvcmd": exit_recvcmd,
+                                    "statcmd": [key, "NULL"],
+                                }
+                            )
+
                     elif topics[2] == "offtimer":
                         await handle_offtimer(device, idx, key, value)
 
