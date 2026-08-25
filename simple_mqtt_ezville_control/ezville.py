@@ -44,6 +44,27 @@ RS485_DEVICE = {
     },
 }
 
+# 공기청정기/환기장치 꺼짐 예약(오프타이머) 옵션 - 첫 항목은 "사용 안 함"
+OFFTIMER_OPTIONS = [
+    "끄지 않음",
+    "1시간 후 꺼짐",
+    "2시간 후 꺼짐",
+    "3시간 후 꺼짐",
+    "4시간 후 꺼짐",
+    "5시간 후 꺼짐",
+    "6시간 후 꺼짐",
+]
+
+
+def offtimer_hours(value):
+    if value == OFFTIMER_OPTIONS[0]:
+        return 0
+    try:
+        return int(value[0])
+    except (ValueError, IndexError):
+        return 0
+
+
 # MQTT Discovery를 위한 Preset 정보
 DISCOVERY_DEVICE = {
     "ids": [
@@ -160,6 +181,15 @@ DISCOVERY_PAYLOAD = {
             "preset_modes": ["auto", "low", "medium", "high", "turbo"],
         },
         {
+            "_intg": "select",
+            "~": "ezville/purifier_{:0>2d}_{:0>2d}",
+            "name": "ezville_purifier_{:0>2d}_{:0>2d}_offtimer",
+            "stat_t": "~/offtimer/state",
+            "cmd_t": "~/offtimer/command",
+            "options": OFFTIMER_OPTIONS,
+            "icon": "mdi:timer-outline",
+        },
+        {
             "_intg": "sensor",
             "~": "ezville/purifier_{:0>2d}_{:0>2d}",
             "name": "ezville_purifier_{:0>2d}_{:0>2d}_co2",
@@ -186,6 +216,15 @@ DISCOVERY_PAYLOAD = {
             "preset_mode_state_topic": "~/mode/state",
             "preset_mode_command_topic": "~/mode/command",
             "preset_modes": ["low", "medium", "high", "auto", "sleep"],
+        },
+        {
+            "_intg": "select",
+            "~": "ezville/ventilator_{:0>2d}_{:0>2d}",
+            "name": "ezville_ventilator_{:0>2d}_{:0>2d}_offtimer",
+            "stat_t": "~/offtimer/state",
+            "cmd_t": "~/offtimer/command",
+            "options": OFFTIMER_OPTIONS,
+            "icon": "mdi:timer-outline",
         },
     ],
 }
@@ -265,6 +304,9 @@ def ezville_loop(config):
 
     # State 저장용 공간
     DEVICE_STATE = {}
+
+    # 공기청정기/환기장치 꺼짐 예약(오프타이머) 진행중인 asyncio Task 저장소
+    OFFTIMER_TASKS = {}
 
     # 이전에 전달된 패킷인지 판단을 위한 캐쉬
     MSG_CACHE = {}
@@ -660,6 +702,12 @@ def ezville_loop(config):
                                         await mqtt_discovery(payload)
                                         await asyncio.sleep(DISCOVERY_DELAY)
 
+                                    # 꺼짐 예약 select 초기값("끄지 않음") 발행 - 최초 등록 전엔 상태가 Unknown으로 표시됨
+                                    mqtt_client.publish(
+                                        STATE_TOPIC.format(discovery_name, "offtimer"),
+                                        OFFTIMER_OPTIONS[0].encode(),
+                                    )
+
                                 pwr_state = "ON" if packet[12:14] == "01" else "OFF"
 
                                 mode_val = packet[14:16]
@@ -708,6 +756,12 @@ def ezville_loop(config):
                                         # 장치 등록 후 DISCOVERY_DELAY초 후에 State 업데이트
                                         await mqtt_discovery(payload)
                                         await asyncio.sleep(DISCOVERY_DELAY)
+
+                                    # 꺼짐 예약 select 초기값("끄지 않음") 발행 - 최초 등록 전엔 상태가 Unknown으로 표시됨
+                                    mqtt_client.publish(
+                                        STATE_TOPIC.format(discovery_name, "offtimer"),
+                                        OFFTIMER_OPTIONS[0].encode(),
+                                    )
 
                                 pwr_state = "ON" if packet[12:14] == "01" else "OFF"
 
@@ -815,6 +869,63 @@ def ezville_loop(config):
                 log("[LOG] ->> HA : {} >> {}".format(topic, value))
 
         return
+
+    # 공기청정기/환기장치 꺼짐 예약(오프타이머) 처리
+    # select 선택 즉시 반영: 기존 예약은 취소하고, "끄지 않음"이 아니면 새로 카운트다운 시작.
+    # 카운트다운 종료 시 기존 전원 OFF 패킷을 그대로 재사용해 실제로 끄고, select 값도 "끄지 않음"으로 되돌림.
+    async def handle_offtimer(device, idx, key, value):
+        nonlocal CMD_QUEUE
+        nonlocal DEVICE_STATE
+        nonlocal OFFTIMER_TASKS
+
+        deviceID = key[: -len("offtimer")]
+        state_topic = STATE_TOPIC.format(deviceID, "offtimer")
+
+        existing = OFFTIMER_TASKS.get(key)
+        if existing and not existing.done():
+            existing.cancel()
+
+        mqtt_client.publish(state_topic, value.encode())
+        DEVICE_STATE[key] = value
+
+        hours = offtimer_hours(value)
+        if hours <= 0:
+            OFFTIMER_TASKS.pop(key, None)
+            return
+
+        async def _fire():
+            try:
+                await asyncio.sleep(hours * 3600)
+            except asyncio.CancelledError:
+                return
+
+            sendcmd = checksum(
+                "F7"
+                + RS485_DEVICE[device]["power"]["id"]
+                + f"0{idx}"
+                + RS485_DEVICE[device]["power"]["cmd"]
+                + "01"
+                + "00"  # power off
+                + "0000"
+            )
+            recvcmd = (
+                "F7"
+                + RS485_DEVICE[device]["power"]["id"]
+                + f"1{idx}"
+                + RS485_DEVICE[device]["power"]["ack"]
+            )
+            statcmd = [deviceID + "power", "OFF"]
+
+            await CMD_QUEUE.put(
+                {"sendcmd": sendcmd, "recvcmd": recvcmd, "statcmd": statcmd}
+            )
+
+            mqtt_client.publish(state_topic, OFFTIMER_OPTIONS[0].encode())
+            DEVICE_STATE[key] = OFFTIMER_OPTIONS[0]
+
+            log("[INFO] 꺼짐 예약 종료 ::: {} 전원 OFF 전송".format(deviceID))
+
+        OFFTIMER_TASKS[key] = asyncio.create_task(_fire())
 
     # HA에서 전달된 메시지 처리
     async def HA_process(topics, value):
@@ -1113,6 +1224,9 @@ def ezville_loop(config):
                                 )
                             )
 
+                    elif topics[2] == "offtimer":
+                        await handle_offtimer(device, idx, key, value)
+
                 elif device == "ventilator":
                     if topics[2] == "power":
                         pwr_val = "01" if value == "ON" else "00"
@@ -1211,6 +1325,9 @@ def ezville_loop(config):
                                     sendcmd, recvcmd, statcmd
                                 )
                             )
+
+                    elif topics[2] == "offtimer":
+                        await handle_offtimer(device, idx, key, value)
 
                 elif device == "batch":
                     # Batch는 Elevator 및 외출/그룹 조명 버튼 상태 고려
@@ -1630,6 +1747,12 @@ def ezville_loop(config):
         MSG_CACHE = {}
         DISCOVERY_LIST = []
         RESIDUE = ""
+
+        # 진행중이던 꺼짐 예약 Task는 재시작 시 정리 (재등록 시 초기값으로 다시 시작됨)
+        for offtimer_task in OFFTIMER_TASKS.values():
+            if not offtimer_task.done():
+                offtimer_task.cancel()
+        OFFTIMER_TASKS = {}
 
 
 if __name__ == "__main__":
