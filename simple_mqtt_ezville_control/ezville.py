@@ -764,13 +764,17 @@ def ezville_loop(config):
 
                                 pwr_state = "ON" if packet[12:14] == "01" else "OFF"
 
-                                mode_val = packet[14:16]
+                                # 속도 바이트의 아래 4비트만 속도다(2026-10-26 패킷 캡처로 확인):
+                                # 위 4비트가 0이 아닌 값(실측 0x32=중, 0x33=강; 꺼짐예약 3시간과 관련
+                                # 추정)이 오는데, 예전처럼 바이트 전체(01~04)로 비교하면 매핑에 없어
+                                # 항상 "low"로 표시됐음(실제는 중·강으로 돌고 있었음).
+                                mode_val = packet[15]
                                 mode_map = {
-                                    "01": "low",
-                                    "02": "medium",
-                                    "03": "high",
-                                    "04": "auto",
-                                    "00": "sleep"
+                                    "1": "low",
+                                    "2": "medium",
+                                    "3": "high",
+                                    "4": "auto",
+                                    "0": "sleep"
                                 }
                                 mode_state = mode_map.get(mode_val, "low")
 
@@ -1303,6 +1307,16 @@ def ezville_loop(config):
                         }
                         cmd, data = mode_frame.get(value, ("42", "01"))
                         await _send_raw(cmd, data)
+
+                        # 단일 프레임이라 응답 확인이 없고, 버스에서 간혹 씹힘(2026-10-26 실측:
+                        # 중풍 직후 보낸 강풍 프레임이 무시됨). 속도(약·중·강)는 상태 패킷으로
+                        # 확인할 수 있으니 반영 안 됐으면 최대 2번 더 보낸다.
+                        if value in ("low", "medium", "high"):
+                            for _ in range(2):
+                                await asyncio.sleep(1.5)
+                                if DEVICE_STATE.get(key) == value:
+                                    break
+                                await _send_raw(cmd, data)
 
                     elif topics[2] == "offtimer":
                         await handle_offtimer(device, idx, key, value)
